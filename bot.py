@@ -213,10 +213,9 @@ async def ping(interaction: discord.Interaction):
     except discord.NotFound:
         pass
 
-
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print(f"Logged in as {bot.user}", flush=True)
 
     try:
         synced = await tree.sync()
@@ -244,9 +243,10 @@ async def start_web_server():
 
 
 async def main():
+    discord.utils.setup_logging()  # Brings back discord.py's log output
     await start_web_server()  # Web server first, so Render sees the open port
     async with bot:
-        await bot.start(TOKEN)  # Then the bot, same as bot.run(TOKEN)
+        await bot.start(TOKEN)  # Then the bot
 
 
 asyncio.run(main())
