@@ -235,11 +235,12 @@ async def handle_health(request):
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/", handle_health)  # Responds to GET /
+    app.router.add_get("/health", handle_health)  # Responds to Render's health check
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv("PORT", "10000"))  # Render sets PORT automatically
+    port = int(os.getenv("PORT", "10000"))
     site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()  # Opens the port so Render detects it
+    await site.start()
 
 
 async def main():
