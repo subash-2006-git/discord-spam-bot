@@ -225,28 +225,4 @@ async def on_ready():
         print(f"Command sync failed: {error}")
 
 
-import asyncio
-from aiohttp import web  # Already installed with discord.py
-
-
-async def handle_health(request):
-    return web.Response(text="Bot is running")  # What the pinger receives
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_health)  # Responds to GET /
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", "10000"))  # Render sets PORT automatically
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-
-async def main():
-    await start_web_server()  # Web server first, so Render sees the port open
-    async with bot:
-        await bot.start(TOKEN)  # Then the bot, same as bot.run(TOKEN)
-
-
-asyncio.run(main())
+bot.run(TOKEN)
