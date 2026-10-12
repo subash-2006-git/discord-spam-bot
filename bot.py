@@ -22,6 +22,8 @@ ALLOWED_USER_IDS = {
 class FriendsOnlyTree(app_commands.CommandTree):
     # Runs before EVERY slash command (/send and /ping)
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        print(f"user={interaction.user.id} allowed={ALLOWED_USER_IDS}", flush=True)
+
         if interaction.user.id in ALLOWED_USER_IDS:
             return True  # Allowed, run the command
         try:
