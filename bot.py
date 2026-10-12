@@ -13,7 +13,27 @@ if not TOKEN:
 intents = discord.Intents.default()
 
 bot = discord.Client(intents=intents)
-tree = app_commands.CommandTree(bot)
+# Comma-separated Discord user IDs allowed to use the bot, set in .env / Render
+ALLOWED_USER_IDS = {
+    int(x) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()
+}
+
+
+class FriendsOnlyTree(app_commands.CommandTree):
+    # Runs before EVERY slash command (/send and /ping)
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id in ALLOWED_USER_IDS:
+            return True  # Allowed, run the command
+        try:
+            await interaction.response.send_message(
+                "Sorry, this bot is private.", ephemeral=True
+            )
+        except discord.NotFound:
+            pass
+        return False  # Blocked, the command does not run
+
+
+tree = FriendsOnlyTree(bot)
 
 REPEAT_COUNT = 5
 NO_MENTIONS = discord.AllowedMentions.none()
