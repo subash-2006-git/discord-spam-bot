@@ -7,8 +7,11 @@ blocked before any command runs.
 
 ## How it works
 
-- `bot.py` — entrypoint. Loads config, builds the Discord client and the
-  allow-list-gated command tree, starts the health-check web server, and runs the bot.
+- `main.py` — **the entrypoint. Always run this one**, never `bot.py` directly
+  (see the note at the top of `bot.py` for why: running `bot.py` itself makes
+  Python load it twice under two different module names, which silently
+  breaks command registration).
+- `bot.py` — config, the Discord client, and the allow-list-gated command tree.
 - `commands.py` — the `/send` and `/ping` slash commands, and the persistent
   "Spam" resend button (including the small on-disk store that lets the button
   survive a restart — see [Data stored locally](#data-stored-locally)).
@@ -53,7 +56,7 @@ blocked before any command runs.
 ## Running locally
 
 ```bash
-python bot.py
+python main.py
 ```
 
 On first run, the bot syncs its two slash commands (`/send`, `/ping`) globally,
@@ -66,7 +69,8 @@ reconnect).
 This bot expects to run as a persistent web service, not a one-off script:
 `health.py` opens an HTTP port and responds to `GET /` and `GET /health`,
 which is what lets a host like Render treat it as a live service and restart
-it if the process dies. Point Render's health check at `/health` and set
+it if the process dies. Set Render's **start command to `python main.py`**
+(not `python bot.py`), point its health check at `/health`, and set
 `BOT_TOKEN` / `ALLOWED_USER_IDS` as environment variables in the dashboard
 rather than committing `.env`.
 

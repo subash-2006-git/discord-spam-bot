@@ -1,24 +1,22 @@
 """
-Entrypoint for the private Discord "spam" bot.
+Discord client, config, and the allow-list-gated command tree.
 
-This module owns the parts everything else depends on: config/env loading,
-the Discord client and the allow-list-gated command tree, and wiring it all
-together with the health-check web server at startup.
+This module is imported by main.py (the real entrypoint) and by commands.py.
 
-Slash commands and the "Spam" resend button live in commands.py; the
-health-check HTTP server lives in health.py. Importing commands.py below is
-what actually registers /send and /ping on the tree — see the comment there.
+Important: never run this file directly with `python bot.py`. Doing so makes
+Python treat it as the `__main__` module instead of as a module named `bot`,
+and `commands.py`'s `from bot import bot, tree` would then reimport this
+file a *second* time under the name `bot`, creating a second, separate
+command tree that /send and /ping end up registered on instead of the one
+that actually gets synced and run. Always start the bot with `python main.py`.
 """
 
-import asyncio
 import logging
 import os
 
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
-
-from health import start_web_server
 
 load_dotenv()
 
@@ -69,10 +67,6 @@ class FriendsOnlyTree(app_commands.CommandTree):
 
 tree = FriendsOnlyTree(bot)
 
-# Registers /send, /ping, the tree's error handler, and the "Spam" button's
-# custom_id handler onto `tree` (imported from this module) as a side effect.
-import commands  # noqa: E402,F401
-
 # --------------------------------------------------------------------------
 # Startup
 # --------------------------------------------------------------------------
@@ -94,20 +88,3 @@ async def on_ready():
             _synced_once = True
         except discord.HTTPException as error:
             log.error("Command sync failed: %s", error)
-
-
-async def main():
-    discord.utils.setup_logging()
-
-    # Re-attach the handler behind the "Spam" button's custom_id so clicks on
-    # buttons from before a restart still work (see commands.py for how the
-    # actual message/owner/mentions are recovered from disk).
-    bot.add_view(commands.ResendView())
-
-    await start_web_server(bot)  # start the web server first so Render sees the open port
-    async with bot:
-        await bot.start(TOKEN)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
