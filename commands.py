@@ -159,6 +159,31 @@ async def report_if_capped(interaction: discord.Interaction, sent: int, requeste
 LOG_PREVIEW_LENGTH = 300
 
 
+async def _resolve_guild_label(guild_id: int | None, cached_guild: discord.Guild | None) -> str:
+    """Best-effort server name for the audit log.
+
+    interaction.guild can be None even for a command run inside a real
+    server: a command can be invoked via a "user install" (the command user
+    added the app to their own account, not to the server), in which case
+    the bot was never added to that server and has no gateway cache - or
+    even API access - to it. We try the cache, then a direct fetch, and
+    otherwise say so plainly instead of leaving a blank gap in the log.
+    """
+    if guild_id is None:
+        return "DM"
+
+    guild = cached_guild or bot.get_guild(guild_id)
+    if guild is None:
+        try:
+            guild = await bot.fetch_guild(guild_id)
+        except discord.HTTPException:
+            guild = None
+
+    if guild is None:
+        return f"Unknown server, bot not a member ({guild_id})"
+    return f"{guild.name} ({guild_id})"
+
+
 async def notify_owner(interaction: discord.Interaction, text: str, sent: int) -> None:
     """DM a one-line audit log of a completed /send or Spam-button resend.
 
@@ -172,8 +197,15 @@ async def notify_owner(interaction: discord.Interaction, text: str, sent: int) -
         return
 
     username = interaction.user.name
-    guild_name = interaction.guild.name if interaction.guild else "DM"
-    channel_name = getattr(interaction.channel, "name", None) or "DM"
+    guild_name = await _resolve_guild_label(interaction.guild_id, interaction.guild)
+
+    channel = interaction.channel
+    channel_display_name = getattr(channel, "name", None)
+    if channel_display_name:
+        channel_name = f"{channel_display_name} ({channel.id})"
+    else:
+        channel_name = "DM"
+
     preview = text if len(text) <= LOG_PREVIEW_LENGTH else text[:LOG_PREVIEW_LENGTH] + "..."
 
     log_line = f"{username} -> {guild_name} -> {channel_name} -> {preview} -> {sent}"
