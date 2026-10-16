@@ -45,6 +45,7 @@ blocked before any command runs.
    | `BOT_TOKEN`          | yes      | Your bot's token from the Developer Portal.                                 |
    | `ALLOWED_USER_IDS`   | yes      | Comma-separated Discord user IDs allowed to run commands, e.g. `111,222`.    |
    | `PORT`               | no       | Port for the health-check server. Defaults to `10000` (Render's default).   |
+   | `LOG_USER_ID`         | no       | A Discord user ID to DM a one-line audit log to on every `/send` or Spam-button use. Leave unset to disable. |
 
    To get a Discord user ID: enable Developer Mode in Discord (Settings →
    Advanced), then right-click a user and choose "Copy User ID".
@@ -93,3 +94,18 @@ disclosure.
 
 Both commands are restricted to the Discord user IDs listed in
 `ALLOWED_USER_IDS`; everyone else gets "Sorry, this bot is private."
+
+## Audit log DMs
+
+If `LOG_USER_ID` is set, the bot DMs that user a one-line log every time
+`/send` or the "Spam" button runs:
+
+```
+{username} -> {guildname} -> {channelname} -> {message_sent} -> {count}
+```
+
+`guildname` is `DM` when the command was run outside a server, `count` is how
+many copies actually went out, and long messages are truncated in the log
+line (the full text is still sent to the channel as normal). A failed DM
+(e.g. the log recipient has DMs closed) is logged as a warning and never
+blocks the command itself.

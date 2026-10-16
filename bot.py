@@ -35,6 +35,11 @@ ALLOWED_USER_IDS = {
     int(user_id) for user_id in os.getenv("ALLOWED_USER_IDS", "").split(",") if user_id.strip()
 }
 
+# Optional: a Discord user ID to DM a one-line log to every time /send (or the
+# Spam button) fires. Leave unset in .env to disable this entirely.
+_raw_log_user_id = os.getenv("LOG_USER_ID", "").strip()
+LOG_USER_ID = int(_raw_log_user_id) if _raw_log_user_id else None
+
 intents = discord.Intents.default()
 bot = discord.Client(intents=intents)
 

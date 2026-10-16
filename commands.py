@@ -22,7 +22,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
-from bot import bot, tree
+from bot import LOG_USER_ID, bot, tree
 
 log = logging.getLogger("spam-bot")
 
@@ -154,6 +154,37 @@ async def report_if_capped(interaction: discord.Interaction, sent: int, requeste
         log.warning("Could not report capped send: %s", error)
 
 
+# Keep the DM log line from blowing past Discord's message length limit when
+# someone sends a very long message.
+LOG_PREVIEW_LENGTH = 300
+
+
+async def notify_owner(interaction: discord.Interaction, text: str, sent: int) -> None:
+    """DM a one-line audit log of a completed /send or Spam-button resend.
+
+    Format: {username} -> {guildname} -> {channelname} -> {message_sent} -> {count}
+
+    No-op if LOG_USER_ID isn't set in .env, and never raises - a DM failure
+    (e.g. the owner has DMs closed) shouldn't affect the command that
+    actually ran.
+    """
+    if LOG_USER_ID is None:
+        return
+
+    username = interaction.user.name
+    guild_name = interaction.guild.name if interaction.guild else "DM"
+    channel_name = getattr(interaction.channel, "name", None) or "DM"
+    preview = text if len(text) <= LOG_PREVIEW_LENGTH else text[:LOG_PREVIEW_LENGTH] + "..."
+
+    log_line = f"{username} -> {guild_name} -> {channel_name} -> {preview} -> {sent}"
+
+    try:
+        owner = bot.get_user(LOG_USER_ID) or await bot.fetch_user(LOG_USER_ID)
+        await owner.send(log_line)
+    except discord.HTTPException as error:
+        log.warning("Could not DM send-log to LOG_USER_ID: %s", error)
+
+
 # --------------------------------------------------------------------------
 # "Spam" resend button
 # --------------------------------------------------------------------------
@@ -201,6 +232,7 @@ class ResendView(discord.ui.View):
         mentions = mentions_for(data["everyone"], data["mention_user_id"])
         sent, capped = await send_many(interaction, data["text"], REPEAT_COUNT, mentions)
         await report_if_capped(interaction, sent, REPEAT_COUNT, capped)
+        await notify_owner(interaction, data["text"], sent)
 
 
 # --------------------------------------------------------------------------
@@ -267,6 +299,7 @@ async def send(
 
     sent, capped = await send_many(interaction, content, REPEAT_COUNT, mentions)
     await report_if_capped(interaction, sent, REPEAT_COUNT, capped)
+    await notify_owner(interaction, content, sent)
 
 
 @tree.command(name="ping", description="Check the bot's latency.")

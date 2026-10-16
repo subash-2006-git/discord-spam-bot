@@ -8,6 +8,7 @@ This Discord application collects and processes only the data necessary for core
 * **Discord User IDs:** Used to verify authorization against configured access lists (`ALLOWED_USER_IDS`).
 * **Interaction Metadata:** Temporal processing of interaction payloads, parameters, and channel context required to execute invoked commands (`/send`, `/ping`).
 * **"Spam" Button State:** When `/send` is used, the message text, the requester's Discord User ID, and any mentioned user's ID are saved locally (in `spam_store.json`, alongside the bot's code) so the "Spam" resend button keeps working even if the bot restarts. Entries are capped at the 500 most recent batches; older entries are dropped automatically.
+* **Optional Audit Log:** If the bot administrator configures `LOG_USER_ID`, a one-line summary (requester's username, server name, channel name, a preview of the message text, and how many copies were sent) is sent as a direct message to that single Discord user each time `/send` or the "Spam" button is used. This is disabled by default and only active if the administrator opts in.
 
 ## 2. Data Usage
 Collected identifiers and execution state variables are used strictly to:
