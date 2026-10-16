@@ -1,275 +1,113 @@
+"""
+Entrypoint for the private Discord "spam" bot.
+
+This module owns the parts everything else depends on: config/env loading,
+the Discord client and the allow-list-gated command tree, and wiring it all
+together with the health-check web server at startup.
+
+Slash commands and the "Spam" resend button live in commands.py; the
+health-check HTTP server lives in health.py. Importing commands.py below is
+what actually registers /send and /ping on the tree — see the comment there.
+"""
+
+import asyncio
+import logging
 import os
+
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+from health import start_web_server
+
 load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN")
+log = logging.getLogger("spam-bot")
 
+# --------------------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------------------
+
+TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN is missing from .env")
 
-intents = discord.Intents.default()
-
-bot = discord.Client(intents=intents)
-# Comma-separated Discord user IDs allowed to use the bot, set in .env / Render
+# Comma-separated Discord user IDs allowed to use the bot, set in .env / Render.
 ALLOWED_USER_IDS = {
-    int(x) for x in os.getenv("ALLOWED_USER_IDS", "").split(",") if x.strip()
+    int(user_id) for user_id in os.getenv("ALLOWED_USER_IDS", "").split(",") if user_id.strip()
 }
+
+intents = discord.Intents.default()
+bot = discord.Client(intents=intents)
+
+
+# --------------------------------------------------------------------------
+# Access control
+# --------------------------------------------------------------------------
 
 
 class FriendsOnlyTree(app_commands.CommandTree):
-    # Runs before EVERY slash command (/send and /ping)
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        print(f"user={interaction.user.id} allowed={ALLOWED_USER_IDS}", flush=True)
+    """Command tree that blocks anyone not in ALLOWED_USER_IDS.
 
+    interaction_check runs before every slash command (/send and /ping), so
+    this is the single choke point for the bot's privacy guarantee.
+    """
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id in ALLOWED_USER_IDS:
-            return True  # Allowed, run the command
+            return True
+
+        log.info("Blocked command from unauthorized user %s", interaction.user.id)
         try:
             await interaction.response.send_message(
                 "Sorry, this bot is private.", ephemeral=True
             )
         except discord.NotFound:
-            pass
-        return False  # Blocked, the command does not run
+            pass  # interaction already expired; nothing more to do
+        return False
 
 
 tree = FriendsOnlyTree(bot)
 
-REPEAT_COUNT = 5
-NO_MENTIONS = discord.AllowedMentions.none()
+# Registers /send, /ping, the tree's error handler, and the "Spam" button's
+# custom_id handler onto `tree` (imported from this module) as a side effect.
+import commands  # noqa: E402,F401
 
+# --------------------------------------------------------------------------
+# Startup
+# --------------------------------------------------------------------------
 
-async def send_many(
-    interaction: discord.Interaction,
-    text: str,
-    count: int = REPEAT_COUNT,
-    mentions: discord.AllowedMentions = NO_MENTIONS,
-    first_text: str | None = None,
-    first_mentions: discord.AllowedMentions | None = None,
-) -> tuple[int, bool]:
-    sent = 0
-    use_followup = False
-    followups_used = 0
+_synced_once = False
 
-    for i in range(count):
-        content = first_text if (i == 0 and first_text) else text
-        allowed = first_mentions if (i == 0 and first_mentions) else mentions
-
-        if not use_followup:
-            try:
-                await interaction.channel.send(content, allowed_mentions=allowed)
-                sent += 1
-                continue
-            except (AttributeError, discord.Forbidden, discord.HTTPException):
-                use_followup = True
-
-        if followups_used >= REPEAT_COUNT:
-            return sent, True
-
-        try:
-            await interaction.followup.send(content, allowed_mentions=allowed)
-        except discord.HTTPException:
-            return sent, True
-
-        followups_used += 1
-        sent += 1
-
-    return sent, False
-
-
-async def report_if_capped(
-    interaction: discord.Interaction, sent: int, requested: int, capped: bool
-):
-    if not capped:
-        return
-    try:
-        await interaction.edit_original_response(
-            content=f"Sent {sent} of {requested}. Discord's limit stopped the rest."
-        )
-    except discord.HTTPException:
-        pass
-
-
-class ResendView(discord.ui.View):
-    def __init__(
-        self,
-        message: str,
-        owner_id: int,
-        mentions: discord.AllowedMentions,
-        first_text: str | None = None,
-        first_mentions: discord.AllowedMentions | None = None,
-    ):
-        super().__init__(timeout=120)
-        self.message = message
-        self.owner_id = owner_id
-        self.mentions = mentions
-        self.first_text = first_text
-        self.first_mentions = first_mentions
-
-    @discord.ui.button(
-        label="Spam",
-        style=discord.ButtonStyle.danger,
-    )
-    async def resend(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        if interaction.user.id != self.owner_id:
-            try:
-                await interaction.response.send_message(
-                    "Only the person who ran this command can use this button.",
-                    ephemeral=True
-                )
-            except discord.NotFound:
-                pass
-            return
-
-        try:
-            await interaction.response.defer()
-        except discord.NotFound:
-            return
-
-        sent, capped = await send_many(
-            interaction, 
-            self.message, 
-            REPEAT_COUNT, 
-            mentions=self.mentions,
-            first_text=self.first_text,
-            first_mentions=self.first_mentions
-        )
-        await report_if_capped(interaction, sent, REPEAT_COUNT, capped)
-
-
-@tree.command(
-    name="send",
-    description="Send a message"
-)
-@app_commands.describe(
-    text="The message you want to send",
-    user="Optional: a user to mention in each message",
-    everyone="Optional: add an @everyone ping to all messages"
-)
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(
-    guilds=True,
-    dms=True,
-    private_channels=True
-)
-async def send(
-    interaction: discord.Interaction,
-    text: str,
-    user: discord.User | None = None,
-    everyone: bool = False,
-):
-    base_content = f"{user.mention} {text}" if user else text
-
-    if everyone:
-        content = f"@everyone {base_content}"
-        mentions = discord.AllowedMentions(
-            everyone=True, users=[user] if user else False, roles=False
-        )
-    else:
-        content = base_content
-        mentions = (
-            discord.AllowedMentions(everyone=False, users=[user], roles=False)
-            if user
-            else NO_MENTIONS
-        )
-
-    if len(content) > 2000:
-        try:
-            await interaction.response.send_message(
-                "Your message must be 2000 characters or fewer (mentions count).",
-                ephemeral=True
-            )
-        except discord.NotFound:
-            pass
-        return
-
-    view = ResendView(
-        message=content,
-        owner_id=interaction.user.id,
-        mentions=mentions,
-        first_text=content,
-        first_mentions=mentions,
-    )
-
-    try:
-        await interaction.response.send_message(
-            f"Sending {REPEAT_COUNT} messages... Press the button to send them again.",
-            view=view,
-            ephemeral=True
-        )
-    except discord.NotFound:
-        return
-
-    sent, capped = await send_many(
-        interaction,
-        content,
-        REPEAT_COUNT,
-        mentions=mentions,
-        first_text=content,
-        first_mentions=mentions,
-    )
-    await report_if_capped(interaction, sent, REPEAT_COUNT, capped)
-
-
-@tree.command(
-    name="ping",
-    description="Check the bot's latency."
-)
-@app_commands.allowed_installs(guilds=True, users=True)
-@app_commands.allowed_contexts(
-    guilds=True,
-    dms=True,
-    private_channels=True
-)
-async def ping(interaction: discord.Interaction):
-    try:
-        await interaction.response.send_message(
-            f"Pong! `{round(bot.latency * 1000)} ms`"
-        )
-    except discord.NotFound:
-        pass
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}", flush=True)
+    global _synced_once
+    log.info("Logged in as %s", bot.user)
 
-    try:
-        synced = await tree.sync()
-        print(f"Synced {len(synced)} global commands.")
-    except discord.HTTPException as error:
-        print(f"Command sync failed: {error}")
-
-
-import asyncio
-from aiohttp import web  # Already installed with discord.py
-
-
-async def handle_health(request):
-    return web.Response(text="Bot is running")  # What the pinger receives
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_health)  # Responds to GET /
-    app.router.add_get("/health", handle_health)  # Responds to Render's health check
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", "10000"))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    # Global command sync is slow to propagate and rate-limited, so only do
+    # it once per process rather than on every reconnect.
+    if not _synced_once:
+        try:
+            synced = await tree.sync()
+            log.info("Synced %d global commands.", len(synced))
+            _synced_once = True
+        except discord.HTTPException as error:
+            log.error("Command sync failed: %s", error)
 
 
 async def main():
-    discord.utils.setup_logging()  # Brings back discord.py's log output
-    await start_web_server()  # Web server first, so Render sees the open port
+    discord.utils.setup_logging()
+
+    # Re-attach the handler behind the "Spam" button's custom_id so clicks on
+    # buttons from before a restart still work (see commands.py for how the
+    # actual message/owner/mentions are recovered from disk).
+    bot.add_view(commands.ResendView())
+
+    await start_web_server(bot)  # start the web server first so Render sees the open port
     async with bot:
-        await bot.start(TOKEN)  # Then the bot
+        await bot.start(TOKEN)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
